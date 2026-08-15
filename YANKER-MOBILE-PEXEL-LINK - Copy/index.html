@@ -450,7 +450,7 @@ button,a{touch-action:manipulation}
 </style><style id="yanker-fix-polish">
 .profile-status-card{background:linear-gradient(135deg,rgba(47,91,255,.12),rgba(17,27,53,.65));border-color:rgba(122,162,255,.28);box-shadow:0 18px 50px rgba(47,91,255,.08)}
 </style>
-</head>
+<style id="yanker-gender-avatar-css">.member-card .avatar{box-shadow:0 0 28px rgba(47,91,255,.12);background:linear-gradient(145deg,rgba(19,36,94,.85),rgba(47,91,255,.18));}.member-card .avatar img{padding:2px;}</style></head>
 <body>
 <div id="app"></div>
 
@@ -565,8 +565,22 @@ function statusBadge(status){
   const m=meta[String(status||"").toLowerCase()]||{label:"نامشخص",icon:"•",cls:"pending"};
   return `<span class="status-badge ${m.cls}"><span class="status-badge-icon">${m.icon}</span>${m.label}</span>`;
 }
-function avatarUrl(seed){
-  return "https://api.dicebear.com/7.x/adventurer/svg?seed=" + encodeURIComponent(seed) + "&backgroundType=gradientLinear&backgroundColor=13245e,2f5bff";
+function avatarUrl(seed, gender){
+  const safeSeed = encodeURIComponent(seed || "Yanker");
+  const g = String(gender || "").toLowerCase();
+  if(g === "female" || g === "زن"){
+    return "https://api.dicebear.com/9.x/avataaars/svg?seed=" + safeSeed + "&top=longHair,LongHairStraight,LongHairStraight2&backgroundColor=13245e";
+  }
+  if(g === "male" || g === "مرد"){
+    return "https://api.dicebear.com/9.x/avataaars/svg?seed=" + safeSeed + "&top=ShortHairShortFlat,ShortHairShortWaved,ShortHairShortCurly&facialHair=Blank,BeardMedium,BeardLight&backgroundColor=13245e";
+  }
+  return "https://api.dicebear.com/9.x/avataaars/svg?seed=" + safeSeed + "&backgroundColor=13245e";
+}
+function genderLabel(gender){
+  const g=String(gender||"").toLowerCase();
+  if(g==="female" || g==="زن") return "زن";
+  if(g==="male" || g==="مرد") return "مرد";
+  return "ثبت نشده";
 }
 function logActivity(text){
   STATE.activity.unshift({ id: uid(), text, ts: Date.now(), actor: STATE.user ? STATE.user.username : "سیستم" });
@@ -672,10 +686,10 @@ async function syncMyStatus(){
 }
 
 function mapClientRequest(x){
-  return {id:x.id,username:x.username,displayName:x.name,discord:x.discord,cityAge:x.cityAge,realAge:x.realAge,playtime:x.playtime,reason:x.reason,status:x.status,createdAt:x.createdAt,reviewedBy:x.reviewedBy,reviewedAt:x.reviewedAt};
+  return {id:x.id,username:x.username,displayName:x.name,discord:x.discord,cityAge:x.cityAge,realAge:x.realAge,playtime:x.playtime,gender:x.gender||x.sex||"",reason:x.reason,status:x.status,createdAt:x.createdAt,reviewedBy:x.reviewedBy,reviewedAt:x.reviewedAt};
 }
 function mapClientMember(x){
-  return {id:x.id,name:x.name,username:x.username,rank:x.rank||"Recruit",status:x.status||"online",joinedAt:x.joinedAt,seed:x.name,userId:x.username};
+  return {id:x.id,name:x.name,username:x.username,gender:x.gender||x.sex||"",rank:x.rank||"Recruit",status:x.status||"online",joinedAt:x.joinedAt,seed:x.name,userId:x.username};
 }
 
 function hasApprovedMembership(){
@@ -946,8 +960,10 @@ async function handleJoinSubmit(e){
   const playtime = Number(f.playtime.value);
   const reason = f.reason.value.trim();
   const discord = f.discord.value.trim();
+  const gender = String(f.gender.value||"").trim();
   const agree = f.agree.checked;
 
+  if(!gender){ STATE.joinError="جنسیت را انتخاب کنید."; render(); return; }
   if(!discord){ STATE.joinError="آیدی دیسکورد را وارد کنید."; render(); return; }
   if(!cityAge || cityAge<7){ STATE.joinError="سن شهری باید حداقل ۷ سال باشد."; render(); return; }
   if(!realAge || realAge<14){ STATE.joinError="سن واقعی باید حداقل ۱۴ سال باشد."; render(); return; }
@@ -963,6 +979,7 @@ async function handleJoinSubmit(e){
       cityAge,
       realAge,
       playtime,
+      gender,
       reason,
       passwordHash: STATE.user.passwordHash || ""
     });
@@ -992,14 +1009,16 @@ async function reviewRequest(id, approve){
     const data = await yankerApi("requests");
     STATE.requests = data.requests.map(r=>({
       id:r.id, username:r.username, displayName:r.name, discord:r.discord,
-      cityAge:r.cityAge, realAge:r.realAge, playtime:r.playtime, reason:r.reason,
+      cityAge:r.cityAge, realAge:r.realAge, playtime:r.playtime,
+      gender:r.gender||r.sex||"", reason:r.reason,
       status:r.status, createdAt:r.createdAt, reviewedBy:r.reviewedBy, reviewedAt:r.reviewedAt
     }));
     const members = await yankerApi("members");
-    STATE.members = members.members.map(m=>({
-      id:m.id,name:m.name,rank:m.rank,status:"online",joinedAt:m.joinedAt,
-      seed:m.name,userId:m.username
-    }));
+    STATE.members = members.members.map(m=>{
+      const req=STATE.requests.find(r=>r.username===m.username);
+      return {id:m.id,name:m.name,username:m.username,gender:m.gender||m.sex||req?.gender||"",
+        rank:m.rank||"Recruit",status:m.status||"online",joinedAt:m.joinedAt,seed:m.name,userId:m.username};
+    });
     render();
   }catch(err){
     alert(err.message);
@@ -1031,9 +1050,10 @@ async function addMemberManual(e){
   e.preventDefault();
   const f = e.target;
   const name = f.name.value.trim();
+  const gender = String(f.gender.value||"").trim();
   const rank = f.rank.value.trim() || "Member";
-  if(!name) return;
-  STATE.members.push({ id: uid(), name, rank, status:"online", joinedAt: Date.now(), seed:name });
+  if(!name || !gender) return;
+  STATE.members.push({ id: uid(), name, gender, rank, status:"online", joinedAt: Date.now(), seed:name });
   await saveMembers();
   logActivity(`عضو ${esc(name)} به صورت دستی اضافه شد`);
   closeModal(); render();
@@ -1278,14 +1298,19 @@ function viewHome(){
 }
 
 function memberCardHtml(m){
+  const g=String(m.gender||"").toLowerCase();
+  const icon=(g==="female"||g==="زن")?"♀":(g==="male"||g==="مرد")?"♂":"•";
   return `
   <div class="card member-card">
     <div class="avatar">
-      <img src="${avatarUrl(m.seed || m.name)}" alt="${esc(m.name)}" loading="lazy"/>
+      <img src="${avatarUrl(m.seed||m.name,m.gender)}" alt="${esc(m.name)}" loading="lazy"/>
       <span class="status-dot ${m.status==='online'?'status-online':'status-offline'}"></span>
     </div>
     <div class="member-name">${esc(m.name)}</div>
-    <span class="member-rank">${esc(m.rank)}</span>
+    <div style="display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin-bottom:7px;">
+      <span class="member-rank">${esc(m.rank)}</span>
+      <span class="member-rank">${icon} ${esc(genderLabel(m.gender))}</span>
+    </div>
     <div class="member-status-text">${m.status==='online'?'برخط':'آفلاین'} · عضو از ${fmtDate(m.joinedAt)}</div>
   </div>`;
 }
@@ -1422,6 +1447,15 @@ function viewJoin(){
       ${STATE.joinError ? `<div class="msg msg-error">${esc(STATE.joinError)}</div>` : ""}
       <form onsubmit="handleJoinSubmit(event)">
         <div class="field"><label>آیدی دیسکورد</label><input name="discord" type="text" placeholder="username#0000" required/></div>
+        <div class="field">
+          <label>جنسیت کاراکتر</label>
+          <select name="gender" required>
+            <option value="">انتخاب کنید</option>
+            <option value="male">♂ مرد</option>
+            <option value="female">♀ زن</option>
+          </select>
+          <div class="hint">استیکر کاراکتر در بخش اعضا بر اساس این انتخاب نمایش داده می‌شود.</div>
+        </div>
         <div class="field-row">
           <div class="field"><label>سن شهری (حداقل ۷)</label><input name="cityAge" type="number" min="0" required/></div>
           <div class="field"><label>سن واقعی (حداقل ۱۴)</label><input name="realAge" type="number" min="0" required/></div>
@@ -1679,6 +1713,7 @@ function adminRequests(){
         <tr>
           <th>متقاضی</th>
           <th>دیسکورد</th>
+          <th>جنسیت</th>
           <th>سن‌ها</th>
           <th>Play Time</th>
           <th>دلیل عضویت</th>
@@ -1703,6 +1738,7 @@ function adminRequests(){
             <span class="pill" style="direction:ltr;display:inline-flex;">${esc(r.discord || "ثبت نشده")}</span>
           </td>
 
+          <td><span class="pill">${genderLabel(r.gender)==="زن"?"♀ زن":genderLabel(r.gender)==="مرد"?"♂ مرد":"• ثبت نشده"}</span></td>
           <td>
             <div class="request-age-cell">
               <div class="request-age-box">
@@ -1783,6 +1819,10 @@ function requestDetailModal(id){
           <div class="request-info-box">
             <span class="label">آیدی دیسکورد</span>
             <span class="value" dir="ltr">${esc(r.discord || "ثبت نشده")}</span>
+          </div>
+          <div class="request-info-box">
+            <span class="label">جنسیت کاراکتر</span>
+            <span class="value">${genderLabel(r.gender)==="زن"?"♀ زن":genderLabel(r.gender)==="مرد"?"♂ مرد":"ثبت نشده"}</span>
           </div>
         </div>
       </div>
@@ -1876,6 +1916,9 @@ function addMemberModal(){
   <p class="panel-sub">افزودن مستقیم عضو بدون فرآیند درخواست عضویت.</p>
   <form onsubmit="addMemberManual(event)">
     <div class="field"><label>نام</label><input name="name" required/></div>
+    <div class="field"><label>جنسیت کاراکتر</label>
+      <select name="gender" required><option value="">انتخاب کنید</option><option value="male">♂ مرد</option><option value="female">♀ زن</option></select>
+    </div>
     <div class="field"><label>رتبه</label>
       <select name="rank"><option>Recruit</option><option>Member</option><option>Enforcer</option><option>Officer</option><option>Co-Owner</option><option>Owner</option></select>
     </div>
