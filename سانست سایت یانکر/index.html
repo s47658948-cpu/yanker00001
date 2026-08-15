@@ -735,6 +735,18 @@ async function openRequestStatus(){
   nav("profile");
 }
 
+async function refreshAdminRequests(){
+  if(!STATE.user || ROLE_LEVEL[STATE.user.role] < 2) return;
+  try{
+    const data = await yankerApi("requests");
+    STATE.requests = (data.requests || []).map(mapClientRequest);
+    return STATE.requests;
+  }catch(e){
+    console.warn("admin request sync failed", e);
+    return [];
+  }
+}
+
 async function refreshAnnouncements(){
   if(!hasApprovedMembership()) { STATE.announcements=[]; return []; }
   try{
@@ -826,6 +838,9 @@ function nav(route){
   if((next==="profile" || next==="join" || next==="announcements") && STATE.user){
     refreshMyStatus().then(async()=>{ if(next==="announcements") await refreshAnnouncements(); if(STATE.route===next) render(); }).catch(()=>{});
   }
+  if(next==="admin" && STATE.user && ROLE_LEVEL[STATE.user.role] >= 2){
+    refreshAdminRequests().then(()=>{ if(STATE.route==="admin") render(); }).catch(()=>{});
+  }
 }
 window.addEventListener("hashchange",()=>{
   STATE.route=normalizeRoute(location.hash);
@@ -834,6 +849,7 @@ window.addEventListener("hashchange",()=>{
     refreshMyStatus().then(async()=>{ if(STATE.route==="announcements") await refreshAnnouncements(); if(STATE.route==="profile" || STATE.route==="join" || STATE.route==="announcements") render(); }).catch(()=>{});
   }
   if(STATE.user && STATE.route==="tickets") refreshTickets().then(()=>render()).catch(()=>{});
+  if(STATE.user && STATE.route==="admin" && ROLE_LEVEL[STATE.user.role] >= 2) refreshAdminRequests().then(()=>{ if(STATE.route==="admin") render(); }).catch(()=>{});
 });
 window.addEventListener("pageshow", async ()=>{
   try{
@@ -1668,9 +1684,12 @@ function adminRequests(){
   <div class="banner" style="margin:0 0 18px;">
     <div>
       <strong style="color:#fff;">درخواست‌های عضویت Yanker</strong>
-      <div class="hint" style="margin-top:3px;">سن شهری، سن واقعی و دلیل عضویت هر متقاضی را جداگانه بررسی کنید.</div>
+      <div class="hint" style="margin-top:3px;">سن بازی/شهری، سن واقعی، Play Time و دلیل کامل عضویت هر متقاضی از سرور دریافت می‌شود.</div>
     </div>
-    <span class="badge badge-pending">⏳ ${pending} درخواست در انتظار</span>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-ghost" onclick="refreshAdminRequests().then(()=>render())">↻ بروزرسانی درخواست‌ها</button>
+      <span class="badge badge-pending">⏳ ${pending} درخواست در انتظار</span>
+    </div>
   </div>
 
   <div class="table-wrap request-table-wrap">
@@ -1679,9 +1698,10 @@ function adminRequests(){
         <tr>
           <th>متقاضی</th>
           <th>دیسکورد</th>
-          <th>سن‌ها</th>
+          <th>سن بازی / شهری</th>
+          <th>سن واقعی</th>
           <th>Play Time</th>
-          <th>دلیل عضویت</th>
+          <th>چرا می‌خواهید عضو Yanker شوید؟</th>
           <th>وضعیت</th>
           <th>عملیات</th>
         </tr>
@@ -1707,8 +1727,13 @@ function adminRequests(){
             <div class="request-age-cell">
               <div class="request-age-box">
                 <strong>${esc(r.cityAge ?? "—")}</strong>
-                <span>سن شهری</span>
+                <span>سن بازی / شهری</span>
               </div>
+            </div>
+          </td>
+
+          <td>
+            <div class="request-age-cell">
               <div class="request-age-box">
                 <strong>${esc(r.realAge ?? "—")}</strong>
                 <span>سن واقعی</span>
@@ -1720,9 +1745,9 @@ function adminRequests(){
 
           <td>
             <div class="request-reason-preview">
-              <b>چرا می‌خواهید عضو Yanker شوید؟</b>
-              ${esc((r.reason || "دلیلی ثبت نشده است.").length > 95
-                ? (r.reason || "").slice(0,95) + "…"
+              <b>دلیل ثبت‌شده توسط متقاضی</b>
+              ${esc((r.reason || "دلیلی ثبت نشده است.").length > 120
+                ? (r.reason || "").slice(0,120) + "…"
                 : (r.reason || "دلیلی ثبت نشده است."))}
             </div>
           </td>
