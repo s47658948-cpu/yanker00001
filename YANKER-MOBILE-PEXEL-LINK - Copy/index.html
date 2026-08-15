@@ -1101,8 +1101,10 @@ function closeModal(){ modalContent = null; editingAnnouncementId = null; render
 
 function navBar(){
   const links = [
-    ["home","خانه"], ["rules","قوانین"], ["members","اعضا"],
-    ...(hasApprovedMembership() ? [["announcements","اطلاعیه‌ها"]] : []), ["join","درخواست عضویت"], ...(hasApprovedMembership() ? [["tickets","تیکت"]] : [])
+    ["home","خانه"], ["rules","قوانین"],
+    ...(hasApprovedMembership() ? [["members","اعضا"],["announcements","اطلاعیه‌ها"]] : []),
+    ["join","درخواست عضویت"],
+    ...(hasApprovedMembership() ? [["tickets","تیکت"]] : [])
   ];
   return `
   <div class="nav">
@@ -1237,6 +1239,7 @@ function viewHome(){
     </div>
   </div>
 
+  ${hasApprovedMembership() ? `
   <div class="section" style="padding-top:0;">
     <div class="wrap">
       <div class="section-head">
@@ -1248,7 +1251,17 @@ function viewHome(){
       </div>
       <div style="margin-top:18px;"><button class="btn btn-ghost" onclick="nav('members')">مشاهده همه اعضا ←</button></div>
     </div>
-  </div>
+  </div>` : `
+  <div class="section" style="padding-top:0;">
+    <div class="wrap">
+      <div class="card" style="text-align:center;">
+        <div style="font-size:30px;margin-bottom:8px;">🔒</div>
+        <h3>لیست اعضا خصوصی است</h3>
+        <p class="panel-sub">پس از تأیید درخواست عضویت توسط مدیریت، لیست اعضای Yanker برای شما قابل مشاهده خواهد بود.</p>
+        <button class="btn btn-primary btn-sm" onclick="nav('${STATE.user ? 'profile' : 'login'}')">${STATE.user ? 'مشاهده وضعیت عضویت' : 'ورود به حساب'}</button>
+      </div>
+    </div>
+  </div>`}
 
   <div class="section" style="padding-top:0;">
     <div class="wrap">
@@ -1310,6 +1323,12 @@ function viewRules(){
 }
 
 function viewMembers(){
+  if(!STATE.user){
+    return membershipGateHtml("اعضای Yanker فقط برای اعضای تأییدشده", "برای مشاهده لیست اعضای Yanker ابتدا وارد حساب شوید و پس از تأیید درخواست عضویت توسط مدیریت، به این بخش دسترسی خواهید داشت.", "login");
+  }
+  if(!hasApprovedMembership()){
+    return membershipGateHtml("دسترسی محدود به اعضای Yanker", "لیست اعضای گنگ فقط برای کاربرانی قابل مشاهده است که درخواست عضویتشان توسط مدیریت تأیید شده باشد.");
+  }
   return `
   <div class="page-head wrap">
     <div class="section-eyebrow">${STATE.members.length} عضو</div>
