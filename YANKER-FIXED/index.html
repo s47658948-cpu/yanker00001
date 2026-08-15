@@ -336,7 +336,7 @@ tr:last-child td{border-bottom:none;}
 window.YANKER_API = "/.netlify/functions/api";
 async function yankerApi(action, method="GET", body=null){
   let url = window.YANKER_API+"?action="+encodeURIComponent(action);
-  if((action === "my-status" || action === "tickets") && typeof STATE !== "undefined" && STATE.user && STATE.user.username){
+  if((action === "my-status" || action === "tickets" || action === "announcements") && typeof STATE !== "undefined" && STATE.user && STATE.user.username){
     url += "&username=" + encodeURIComponent(STATE.user.username);
   }
   const r = await fetch(url,{
@@ -434,6 +434,15 @@ function fmtDate(ts){
   try{ return new Date(ts).toLocaleString("fa-IR",{dateStyle:"medium",timeStyle:"short"}); }
   catch(e){ return ""; }
 }
+function statusBadge(status){
+  const meta={
+    pending:{label:"در حال بررسی",icon:"⏳",cls:"pending"},
+    approved:{label:"تأیید شده",icon:"✓",cls:"approved"},
+    rejected:{label:"رد شده",icon:"×",cls:"rejected"}
+  };
+  const m=meta[String(status||"").toLowerCase()]||{label:"نامشخص",icon:"•",cls:"pending"};
+  return `<span class="status-badge ${m.cls}"><span class="status-badge-icon">${m.icon}</span>${m.label}</span>`;
+}
 function avatarUrl(seed){
   return "https://api.dicebear.com/7.x/adventurer/svg?seed=" + encodeURIComponent(seed) + "&backgroundType=gradientLinear&backgroundColor=13245e,2f5bff";
 }
@@ -445,14 +454,13 @@ function logActivity(text){
 
 /* ---------- bootstrap ---------- */
 async function loadAll(){
-  const [users, localAnnouncements, rules, activity, session, apiMembers, apiAnnouncements] = await Promise.all([
+  const [users, localAnnouncements, rules, activity, session, apiMembers] = await Promise.all([
     getJSON("yanker_users", true, null),
     getJSON("yanker_announcements", true, null),
     getJSON("yanker_rules", true, null),
     getJSON("yanker_activity", true, null),
     getJSON("yanker_session", false, null),
-    yankerApi("members").catch(()=>({members:[]})),
-    yankerApi("announcements").catch(()=>({announcements:[]}))
+    yankerApi("members").catch(()=>({members:[]}))
   ]);
 
   STATE.rules = rules || DEFAULT_RULES.slice();
@@ -494,10 +502,8 @@ async function loadAll(){
   }));
   try { localStorage.removeItem("yanker_members"); } catch(e) {}
 
-  // Announcements are now persisted in Supabase. Old local demo announcements are removed.
-  STATE.announcements = (apiAnnouncements.announcements || []).map(a=>({
-    id:a.id,title:a.title,body:a.body,author:a.author,date:a.date,published:a.published
-  }));
+  // Announcements are private: they are loaded only after the user's approved membership is known.
+  STATE.announcements = [];
   try { localStorage.removeItem("yanker_announcements"); } catch(e) {}
 
   STATE.activity = activity || [];
@@ -521,7 +527,14 @@ async function loadAll(){
   }
 
   STATE.loaded = true;
-  if(STATE.user) { setTimeout(()=>refreshMyStatus(), 0); setTimeout(()=>refreshTickets(), 0); }
+  if(STATE.user) {
+    setTimeout(async()=>{
+      await refreshMyStatus();
+      await refreshAnnouncements();
+      if(hasApprovedMembership()) await refreshTickets();
+      render();
+    }, 0);
+  }
   try { window.addEventListener('hashchange', ()=>{ if(STATE.route==='tickets') refreshTickets(); }); } catch(e) {}
 }
 
@@ -541,6 +554,22 @@ function mapClientRequest(x){
 }
 function mapClientMember(x){
   return {id:x.id,name:x.name,username:x.username,rank:x.rank||"Recruit",status:x.status||"online",joinedAt:x.joinedAt,seed:x.name,userId:x.username};
+}
+
+function hasApprovedMembership(){
+  if(!STATE.user || !STATE.user.username) return false;
+  if(STATE.user.role === "owner" || STATE.user.role === "admin" || STATE.user.role === "moderator") return true;
+  if(STATE.members.some(m=>String(m.username||"").toLowerCase()===STATE.user.username.toLowerCase())) return true;
+  return STATE.requests.some(r=>r.username===STATE.user.username && r.status==="approved");
+}
+
+function membershipGateHtml(title, text, action="profile"){
+  return `<div class="auth-shell"><div class="panel" style="text-align:center;max-width:650px;margin:40px auto;">
+    <div style="font-size:42px;margin-bottom:12px;">🔒</div>
+    <h2 class="panel-title">${esc(title)}</h2>
+    <p class="panel-sub">${esc(text)}</p>
+    <button class="btn btn-primary" onclick="nav('${action}')">${action==='profile'?'مشاهده وضعیت عضویت':'ورود به حساب'}</button>
+  </div></div>`;
 }
 
 async function refreshMyStatus(){
@@ -584,8 +613,21 @@ async function openRequestStatus(){
   nav("profile");
 }
 
+async function refreshAnnouncements(){
+  if(!hasApprovedMembership()) { STATE.announcements=[]; return []; }
+  try{
+    const r=await yankerApi("announcements");
+    STATE.announcements=(r.announcements||[]).map(a=>({id:a.id,title:a.title,body:a.body,author:a.author,date:a.date,published:a.published}));
+    return STATE.announcements;
+  }catch(e){
+    STATE.announcements=[];
+    console.warn("announcement sync failed",e);
+    return [];
+  }
+}
+
 async function refreshTickets(){
-  if(!STATE.user || !STATE.user.username) return;
+  if(!STATE.user || !STATE.user.username || !hasApprovedMembership()) { STATE.tickets=[]; return []; }
   try{
     const r=await yankerApi("tickets");
     STATE.tickets=r.tickets||[];
@@ -597,6 +639,7 @@ async function refreshTickets(){
 let ticketCooldownUntil=0;
 async function createTicket(e){
   e.preventDefault();
+  if(!hasApprovedMembership()){ alert("فقط اعضایی که درخواست عضویتشان تأیید شده است می‌توانند تیکت ارسال کنند."); return; }
   const f=e.target, subject=f.subject.value.trim(), message=f.message.value.trim();
   if(!subject||!message) return;
   const button=f.querySelector('button[type="submit"]');
@@ -658,14 +701,16 @@ function nav(route){
   if(location.hash!==target) location.hash=target;
   window.scrollTo({top:0,behavior:"instant"});
   render();
-  if(next==="profile" && STATE.user){
-    refreshMyStatus().then(()=>{ if(STATE.route==="profile") render(); }).catch(()=>{});
+  if((next==="profile" || next==="join" || next==="announcements") && STATE.user){
+    refreshMyStatus().then(async()=>{ if(next==="announcements") await refreshAnnouncements(); if(STATE.route===next) render(); }).catch(()=>{});
   }
 }
 window.addEventListener("hashchange",()=>{
   STATE.route=normalizeRoute(location.hash);
   render();
-  if(STATE.user && STATE.route==="profile") refreshMyStatus().then(()=>{ if(STATE.route==="profile") render(); }).catch(()=>{});
+  if(STATE.user && (STATE.route==="profile" || STATE.route==="join" || STATE.route==="announcements")){
+    refreshMyStatus().then(async()=>{ if(STATE.route==="announcements") await refreshAnnouncements(); if(STATE.route==="profile" || STATE.route==="join" || STATE.route==="announcements") render(); }).catch(()=>{});
+  }
   if(STATE.user && STATE.route==="tickets") refreshTickets().then(()=>render()).catch(()=>{});
 });
 window.addEventListener("pageshow", async ()=>{
@@ -810,6 +855,7 @@ async function handleJoinSubmit(e){
     STATE.requests=[mapClientRequest(result.request)];
     render();
     await refreshMyStatus();
+    // The request is persisted in Supabase; the local state is only a fast UI cache.
     if(STATE.route==="join") render();
   }catch(err){
     STATE.joinSuccess = false;
@@ -934,7 +980,7 @@ function closeModal(){ modalContent = null; editingAnnouncementId = null; render
 function navBar(){
   const links = [
     ["home","خانه"], ["rules","قوانین"], ["members","اعضا"],
-    ["announcements","اطلاعیه‌ها"], ["join","درخواست عضویت"], ...(STATE.user ? [["tickets","تیکت"]] : [])
+    ...(hasApprovedMembership() ? [["announcements","اطلاعیه‌ها"]] : []), ["join","درخواست عضویت"], ...(hasApprovedMembership() ? [["tickets","تیکت"]] : [])
   ];
   return `
   <div class="nav">
@@ -984,7 +1030,7 @@ function footer(){
       </div>
       <div class="footer-bottom">
         <span>© ${new Date().getFullYear()} YANKER // SUNSET CITY — کلیه حقوق محفوظ است.</span>
-        <span>ساخته‌شده برای کامیونیتی FiveM</span>
+        <span>ساخته شده توسط PEXEL</span>
       </div>
     </div>
   </div>`;
@@ -1088,7 +1134,7 @@ function viewHome(){
         <h2 class="section-title">آخرین اطلاعیه‌ها</h2>
       </div>
       <div class="grid-3">
-        ${STATE.announcements.slice(0,3).map(announcementCardHtml).join("") || `<div class="empty-state">اطلاعیه‌ای ثبت نشده است.</div>`}
+        ${hasApprovedMembership() ? (STATE.announcements.slice(0,3).map(announcementCardHtml).join("") || `<div class="empty-state">اطلاعیه‌ای منتشر نشده است.</div>`) : `<div class="empty-state"><div class="em-icon">🔒</div>اطلاعیه‌ها فقط برای اعضای تأییدشده قابل مشاهده است.</div>`}
       </div>
     </div>
   </div>
@@ -1157,6 +1203,7 @@ function viewMembers(){
 }
 
 function viewAnnouncements(){
+  if(!hasApprovedMembership()) return membershipGateHtml("اطلاعیه‌ها مخصوص اعضای تأییدشده است","برای مشاهده اطلاعیه‌های Yanker باید درخواست عضویت شما توسط مدیریت تأیید شده باشد.");
   const pub = STATE.announcements.filter(a=>a.published);
   return `
   <div class="page-head wrap">
@@ -1340,6 +1387,7 @@ function viewProfile(){
 
 function viewTickets(){
   if(!STATE.user) return `<div class="center-hint"><p>برای ارتباط با مدیریت ابتدا وارد شوید.</p><button class="btn btn-primary" onclick="nav('login')">ورود</button></div>`;
+  if(!hasApprovedMembership()) return membershipGateHtml("مرکز تیکت برای اعضای تأییدشده است","بعد از تأیید درخواست عضویت، بخش تیکت برای حساب شما فعال می‌شود.");
   const tickets=STATE.tickets||[];
   const tab=STATE.ticketUserTab||"open";
   const open=tickets.filter(t=>t.status!=='closed');
@@ -1686,7 +1734,7 @@ function demoBanner(){
   return `
   <div class="wrap">
     <div class="banner">
-      <span>🔑 : نام کاربری <b>owner</b> و رمز عبور <b>Yanker@Admin#2026</b></span>
+      <span>❗️:  سلام دوست عزیز به YANKER خوش اومدی قبل از درخواست عضویت قوانین رو مطالعه بکن.<b></b><b></b></span>
       <button class="btn btn-sm btn-ghost" onclick="STATE.banner=false;render()">متوجه شدم</button>
     </div>
   </div>`;
